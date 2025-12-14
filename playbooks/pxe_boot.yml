@@ -1,0 +1,54 @@
+﻿---
+- name: Configure PXE boot via Redfish
+  hosts: localhost
+  gather_facts: false
+  vars:
+    bmc_host: 172.31.16.1            # BMC IP or hostname (mockなら127.0.0.1など)
+    bmc_port: 5000                 # BMC HTTPS/HTTP port (dmtf/redfish-interface-emulatorはデフォルト5000)
+    bmc_scheme: http               # https or http (emulatorはhttp)
+    bmc_user: root                 # BMC username
+    bmc_password: changeme         # BMC password
+    system_id: "System-1"                  # Redfish System ID (check your BMC; often "1" or "System.Embedded.1")
+    boot_enable: Continuous         # Continuous or Once
+    boot_mode: Uefi                 # Uefi or Legacy
+    reboot_after: false             # Set true to reboot after changing boot settings
+    validate_certs: false           # Set true if BMC has a trusted cert
+
+  tasks:
+    - name: Set PXE boot via Redfish REST (PATCH Boot)
+      ansible.builtin.uri:
+        url: "{{ bmc_scheme }}://{{ bmc_host }}:{{ bmc_port }}/redfish/v1/Systems/{{ system_id }}"
+        method: PATCH
+        user: "{{ bmc_user }}"
+        password: "{{ bmc_password }}"
+        force_basic_auth: true
+        body_format: json
+        headers:
+          Content-Type: application/json
+        body:
+          Boot:
+            BootSourceOverrideEnabled: "{{ boot_enable }}"
+            BootSourceOverrideMode: "{{ boot_mode }}"
+            BootSourceOverrideTarget: "Pxe"       
+        status_code: [200, 204]
+        validate_certs: "{{ validate_certs }}"
+      delegate_to: localhost
+      no_log: false
+
+    - name: Reboot system to apply PXE boot change (optional)
+      ansible.builtin.uri:
+        url: "{{ bmc_scheme }}://{{ bmc_host }}:{{ bmc_port }}/redfish/v1/Systems/{{ system_id }}/Actions/ComputerSystem.Reset"
+        method: POST
+        user: "{{ bmc_user }}"
+        password: "{{ bmc_password }}"
+        force_basic_auth: true
+        body_format: json
+        headers:
+          Content-Type: application/json
+        body:
+          ResetType: GracefulRestart
+        status_code: [200, 202, 204]
+        validate_certs: "{{ validate_certs }}"
+      delegate_to: localhost
+      when: reboot_after
+      no_log: true
