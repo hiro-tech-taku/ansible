@@ -35,5 +35,7 @@ ansible-playbook playbooks/pxe_boot.yml \
 2. `reboot_after`が`true`の場合、`POST <scheme>://<BMC>:<port>/redfish/v1/Systems/<system_id>/Actions/ComputerSystem.Reset` に `ResetType: GracefulRestart` を送信し再起動
 
 ## 参考URL
-- Ansible `community.general.redfish_command` ドキュメント: https://docs.ansible.com/ansible/latest/collections/community/general/redfish_command_module.html
+- NVIDIA公式(RedfishAPIの説明)：https://docs.nvidia.com/dgx/dgxb200-user-guide/redfish-api-supp.html
 - DMTF Redfish Schema (Boot要素の定義): https://redfish.dmtf.org/schemas/v1/ComputerSystem.v1_20_0.json
+- Mockサーバの参考URL：https://github.com/DMTF/Redfish-Interface-Emulator
+- Redfish参考URL：https://www.dmtf.org/standards/redfish
