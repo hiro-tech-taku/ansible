@@ -1,0 +1,93 @@
+# Redfish Emulator で Boot を PATCH 可能にする手順まとめ
+
+ローカルにリポジトリを取得・修正し、PXEブート変更のテストができるエミュレータを立てるための手順です。
+
+## 1. リポジトリをクローン
+```bash
+git clone https://github.com/DMTF/Redfish-Interface-Emulator.git
+cd Redfish-Interface-Emulator
+```
+
+## 2. `computer_system.py` を修正して Boot を PATCH 許可
+対象: `api_emulator/redfish/templates/computer_system.py`
+
+- 変更前（例）
+```python
+allowable_patchable_keys = [
+    'AssetTag',
+    'Bios',
+    'IndicatorLED',
+    'Links',
+    'LocationIndicatorActive',
+    'PowerState',
+    'SKU'
+]
+```
+
+- 変更後（例）
+```python
+allowable_patchable_keys = [
+    'AssetTag',
+    'Bios',
+    'Boot',  # 追加
+    'IndicatorLED',
+    'Links',
+    'LocationIndicatorActive',
+    'PowerState',
+    'SKU'
+]
+
+allowable_boot_keys = {
+    'BootSourceOverrideEnabled': ['Disabled', 'Once', 'Continuous'],
+    'BootSourceOverrideMode': ['UEFI', 'Legacy', 'Uefi', 'LegacyBios'],
+    'BootSourceOverrideTarget': ['Pxe', 'Hdd', 'None', 'Usb', 'Cd', 'Floppy', 'UefiHttp']
+}
+
+if 'Boot' in request_data:
+    boot_data = request_data.get('Boot', {})
+    for k, v in boot_data.items():
+        if k not in allowable_boot_keys:
+            abort(400)
+        if allowable_boot_keys[k] and v not in allowable_boot_keys[k]:
+            abort(400)
+    resource['Boot'].update(boot_data)
+```
+
+## 3. ローカルでコンテナをビルド
+```bash
+docker build -t redfish-emu-local .
+```
+
+## 4. ローカルで起動（5000番で待ち受け）
+```bash
+docker run --rm -it -p 5000:5000 --name redfish-emu-local redfish-emu-local -port 5000
+```
+- 5000 が使用中なら `-p 5001:5000` に変更し、後述の `bmc_port` も合わせる。
+
+## 5. Playbook を実行
+- ホストに Ansible がある場合
+```bash
+ansible-playbook playbooks/pxe_boot.yml \
+  -e "bmc_scheme=http bmc_host=127.0.0.1 bmc_port=5000 bmc_user=admin bmc_password='pass' system_id=System-1 boot_enable=Continuous reboot_after=false validate_certs=false"
+```
+
+- Ansible が無い場合（コンテナ内で pip インストール）
+```bash
+wd=$(pwd)
+docker run --rm -it \
+  -v "$wd:/workspace" \
+  -w /workspace \
+  python:3.11-slim \
+  /bin/sh -c "pip install --no-cache-dir ansible && ansible-playbook playbooks/pxe_boot.yml -e 'bmc_scheme=http bmc_host=host.docker.internal bmc_port=5000 bmc_user=admin bmc_password=pass system_id=System-1 boot_enable=Continuous reboot_after=false validate_certs=false'"
+```
+- エミュレータを別ポート公開した場合は `bmc_port` を合わせる。
+
+## 確認ポイント
+- エミュレータのログに 4xx が出ないこと。
+- Playbook が 200/204 で成功すること（再起動タスクは `reboot_after` が `true` のときのみ実行）。
+- `BootSourceOverride*` の許容値が実装に合っていること（許可値にない文字列で 400 になる場合は許容リストを調整）。
+
+## 参考URL
+- Redfish Interface Emulator リポジトリ: https://github.com/DMTF/Redfish-Interface-Emulator
+- テンプレート例 `computer_system.py`: https://github.com/DMTF/Redfish-Interface-Emulator/blob/main/api_emulator/redfish/templates/computer_system.py
+- Redfish ComputerSystem スキーマ: https://redfish.dmtf.org/schemas/v1/ComputerSystem.v1_20_0.json
