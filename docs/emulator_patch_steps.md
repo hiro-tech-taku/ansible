@@ -9,48 +9,118 @@ cd Redfish-Interface-Emulator
 ```
 
 ## 2. `computer_system.py` を修正して Boot を PATCH 許可
-対象: `api_emulator/redfish/templates/computer_system.py`
+対象: `api_emulator/redfish/ComputerSystem_api.py`
 
 - 変更前（例）
 ```python
-allowable_patchable_keys = [
-    'AssetTag',
-    'Bios',
-    'IndicatorLED',
-    'Links',
-    'LocationIndicatorActive',
-    'PowerState',
-    'SKU'
-]
+    # patch for systems
+    # def patch(self, ident):
+    #     logging.info('ComputerSystemAPI PATCH called for {ident}')
+    #     patch_data = request.get_json(force=True)
+
+    #     try:
+            
+    #         if ident not in members:
+    #             logging.error(f"System {ident} not found in members")
+    #             return {"error": f"{ident} not found."}, 404
+            
+    #         updatable_fields = ["Name", "HostName", "AssetTag", "SerialNumber", "UUID"]
+    #         updated_fields = {}
+
+    #         for key in patch_data:
+    #             for key in patch_data:
+    #                 if key not in updatable_fields:
+    #                     return {
+    #                         "error": f"Field '{key}' is not updatable"
+    #                     }, 400
+    #             if key in updatable_fields and key in members[ident]:
+    #                 if key == "UUID":
+    #                     try:
+    #                         new_uuid=uuid.UUID(patch_data[key])
+    #                     except ValueError:
+    #                         return{
+    #                             "error": "Invalid UUID format"
+    #                         }, 400
+                        
+    #                     for sys_id, sys_data in members.items():
+    #                         if sys_id != ident and sys_data.get("UUID") == str(new_uuid):
+    #                             return {"error": f"UUID {new_uuid} is already used by {sys_id}."}, 400
+                        
+    #                 members[ident][key] = patch_data[key]
+    #                 updated_fields[key] = patch_data[key]
+            
+    #         return members[ident], 200
+        
+    #     except Exception as e:
+    #         logging.error(f"Error during patch for {ident}: {str(e)}")
+    #         traceback.print_exc()
+    #         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 ```
 
 - 変更後（例）
 ```python
-allowable_patchable_keys = [
-    'AssetTag',
-    'Bios',
-    'Boot',  # 追加
-    'IndicatorLED',
-    'Links',
-    'LocationIndicatorActive',
-    'PowerState',
-    'SKU'
-]
+   def patch(self, ident):
+        logging.info(f'ComputerSystemAPI PATCH called for {ident}')
+        patch_data = request.get_json(force=True)
 
-allowable_boot_keys = {
-    'BootSourceOverrideEnabled': ['Disabled', 'Once', 'Continuous'],
-    'BootSourceOverrideMode': ['UEFI', 'Legacy', 'Uefi', 'LegacyBios'],
-    'BootSourceOverrideTarget': ['Pxe', 'Hdd', 'None', 'Usb', 'Cd', 'Floppy', 'UefiHttp']
-}
+        try:
+            if ident not in members:
+                logging.error(f"System {ident} not found in members")
+                return {"error": f"{ident} not found."}, 404
 
-if 'Boot' in request_data:
-    boot_data = request_data.get('Boot', {})
-    for k, v in boot_data.items():
-        if k not in allowable_boot_keys:
-            abort(400)
-        if allowable_boot_keys[k] and v not in allowable_boot_keys[k]:
-            abort(400)
-    resource['Boot'].update(boot_data)
+            # PATCHで許可するフィールド一覧
+            updatable_fields = [
+                "Name", "HostName", "AssetTag", "SerialNumber", "UUID", "Boot"
+            ]
+
+            # Boot内の許容キーと値
+            allowable_boot_keys = {
+                "BootSourceOverrideEnabled": ["Disabled", "Once", "Continuous"],
+                "BootSourceOverrideMode": ["UEFI", "Legacy", "Uefi", "LegacyBios"],
+                "BootSourceOverrideTarget": ["Pxe", "Hdd", "None", "Usb", "Cd", "Floppy", "UefiHttp"]
+            }
+
+            updated_fields = {}
+
+            for key, value in patch_data.items():
+                if key not in updatable_fields:
+                    return {
+                        "error": f"Field '{key}' is not updatable"
+                    }, 400
+
+                if key == "UUID":
+                    try:
+                        new_uuid = uuid.UUID(value)
+                    except ValueError:
+                        return {
+                            "error": "Invalid UUID format"
+                        }, 400
+
+                    for sys_id, sys_data in members.items():
+                        if sys_id != ident and sys_data.get("UUID") == str(new_uuid):
+                            return {"error": f"UUID {new_uuid} is already used by {sys_id}."}, 400
+
+                elif key == "Boot":
+                    if "Boot" not in members[ident]:
+                        members[ident]["Boot"] = {}
+                    for boot_key, boot_val in value.items():
+                        if boot_key not in allowable_boot_keys:
+                            return {"error": f"Invalid Boot key: {boot_key}"}, 400
+                        if boot_val not in allowable_boot_keys[boot_key]:
+                            return {"error": f"Invalid value '{boot_val}' for {boot_key}"}, 400
+                        members[ident]["Boot"][boot_key] = boot_val
+                    updated_fields["Boot"] = value
+
+                else:
+                    members[ident][key] = value
+                    updated_fields[key] = value
+
+            return members[ident], 200
+
+        except Exception as e:
+            logging.error(f"Error during patch for {ident}: {str(e)}")
+            traceback.print_exc()
+            return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 ```
 
 ## 3. ローカルでコンテナをビルド
@@ -73,14 +143,18 @@ ansible-playbook playbooks/pxe_boot.yml \
 
 - Ansible が無い場合（コンテナ内で pip インストール）
 ```bash
-wd=$(pwd)
-docker run --rm -it \
-  -v "$wd:/workspace" \
-  -w /workspace \
-  python:3.11-slim \
-  /bin/sh -c "pip install --no-cache-dir ansible && ansible-playbook playbooks/pxe_boot.yml -e 'bmc_scheme=http bmc_host=host.docker.internal bmc_port=5000 bmc_user=admin bmc_password=pass system_id=System-1 boot_enable=Continuous reboot_after=false validate_certs=false'"
+ $extraVars = '{"reboot_after": true, "bmc_scheme": "http", "bmc_host": "host.docker.internal", "bmc_port": 5000, "bmc_user": "admin", "bmc_password": "pass", "system_id": "System-1", "boot_enable": "Continuous", "validate_certs": false}'
+
+docker run --rm -it `  -v "${PWD}:/workspace" `  -w /workspace `  python:3.11-slim `  /bin/sh -c "pip install --no-cache-dir ansible && ansible-playbook playbooks/pxe_boot.yml -e '$extraVars'"
 ```
 - エミュレータを別ポート公開した場合は `bmc_port` を合わせる。
+
+
+## 確認コマンド
+- PowerShellでRedfish APIをGET
+```
+Invoke-RestMethod -Method GET -Uri "http://localhost:5000/redfish/v1/Systems/System-1"  
+```
 
 ## 確認ポイント
 - エミュレータのログに 4xx が出ないこと。
